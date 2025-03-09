@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Image, Animated, Easing } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, View, Text, TouchableOpacity, Animated, Easing, Dimensions } from 'react-native';
+
+const { width, height } = Dimensions.get('window');
 
 export default function App() {
   const [score, setScore] = useState(0);
@@ -7,11 +9,20 @@ export default function App() {
   const [ballPosition] = useState(new Animated.ValueXY({ x: 0, y: 0 }));
   const [keeperPosition] = useState(new Animated.Value(0));
   const [shotDirection, setShotDirection] = useState({ x: 0, y: 0 });
+  const [ballScale] = useState(new Animated.Value(1));
+  const goalPostRef = useRef(null);
+  
+  // Field dimensions
+  const goalWidth = width * 0.8;
+  const goalHeight = height * 0.25;
+  const keeperWidth = 50;
+  const ballSize = 30;
   
   // Reset ball and keeper positions
   const resetPositions = () => {
     ballPosition.setValue({ x: 0, y: 0 });
     keeperPosition.setValue(0);
+    ballScale.setValue(1);
   };
   
   // Handle shoot button press
@@ -19,32 +30,66 @@ export default function App() {
     if (gameState !== 'ready') return;
     
     // Random shot direction (left/right/center and top/middle/bottom)
-    const xDir = Math.random() * 300 - 150;
-    const yDir = -100 - Math.random() * 100;
+    const xDir = Math.random() * (goalWidth - 40) - (goalWidth / 2 - 20);
+    const yDir = -(height * 0.3) - Math.random() * 50;
     setShotDirection({ x: xDir, y: yDir });
     
     // Random keeper move (doesn't always match shot direction)
-    const keeperMove = Math.random() * 200 - 100;
+    const keeperMove = (Math.random() - 0.5) * (goalWidth - keeperWidth - 20);
     
     setGameState('shooting');
     
-    // Animate goalkeeper
+    // Animate goalkeeper - jumps to a position
     Animated.timing(keeperPosition, {
       toValue: keeperMove,
-      duration: 500,
-      useNativeDriver: false,
-      easing: Easing.out(Easing.ease),
+      duration: 300,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.back(1)),
     }).start();
     
-    // Animate ball
-    Animated.timing(ballPosition, {
-      toValue: { x: xDir, y: yDir },
-      duration: 1000,
-      useNativeDriver: false,
-      easing: Easing.out(Easing.ease),
-    }).start(() => {
+    // Create ball animation sequence
+    const ballAnimations = [
+      // First shrink ball slightly as "wind up"
+      Animated.timing(ballScale, {
+        toValue: 0.8,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      // Then animate ball toward goal with scaling for perspective
+      Animated.parallel([
+        Animated.timing(ballPosition, {
+          toValue: { x: xDir, y: yDir },
+          duration: 800,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.quad),
+        }),
+        Animated.timing(ballScale, {
+          toValue: 0.5, // Ball gets smaller as it moves away
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ]),
+    ];
+    
+    // Run the sequence
+    Animated.sequence(ballAnimations).start(() => {
       // Determine if it's a goal or miss
-      const isGoal = Math.abs(keeperMove - xDir) > 80 && Math.abs(xDir) < 150;
+      // Calculate if the ball is inside the goal
+      const ballFinalX = xDir;
+      
+      // Check if keeper caught the ball (intersection of keeper and ball positions)
+      const keeperLeft = keeperMove - (keeperWidth / 2);
+      const keeperRight = keeperMove + (keeperWidth / 2);
+      
+      const isBlocked = 
+        ballFinalX > keeperLeft - ballSize/2 && 
+        ballFinalX < keeperRight + ballSize/2;
+      
+      // Check if ball is inside goal posts
+      const isInGoal = 
+        Math.abs(ballFinalX) < (goalWidth/2 - 15);
+      
+      const isGoal = isInGoal && !isBlocked;
       
       setGameState(isGoal ? 'scored' : 'missed');
       
@@ -72,38 +117,59 @@ export default function App() {
       </View>
       
       <View style={styles.gameArea}>
+        {/* Field */}
+        <View style={styles.field} />
+        
         {/* Goal */}
-        <View style={styles.goalPost}>
+        <View 
+          ref={goalPostRef}
+          style={[
+            styles.goalPost,
+            { width: goalWidth, height: goalHeight }
+          ]}
+        >
           <View style={styles.crossbar} />
           <View style={styles.leftPost} />
           <View style={styles.rightPost} />
-          <View style={styles.net} />
+          <View style={styles.netVertical} />
+          <View style={styles.netHorizontal} />
         </View>
         
         {/* Goalkeeper */}
         <Animated.View 
           style={[
             styles.goalkeeper,
+            { width: keeperWidth },
             {
               transform: [
                 { translateX: keeperPosition }
               ]
             }
           ]}
-        />
+        >
+          <View style={styles.keeperHead} />
+          <View style={styles.keeperBody} />
+          <View style={styles.keeperLeftArm} />
+          <View style={styles.keeperRightArm} />
+        </Animated.View>
         
         {/* Ball */}
         <Animated.View 
           style={[
             styles.ball,
+            { width: ballSize, height: ballSize },
             {
               transform: [
                 { translateX: ballPosition.x },
-                { translateY: ballPosition.y }
+                { translateY: ballPosition.y },
+                { scale: ballScale }
               ]
             }
           ]}
-        />
+        >
+          <View style={styles.ballPattern} />
+          <View style={[styles.ballPattern, { transform: [{ rotate: '90deg' }] }]} />
+        </Animated.View>
       </View>
       
       {gameState === 'scored' && (
@@ -114,7 +180,7 @@ export default function App() {
       
       {gameState === 'missed' && (
         <View style={styles.messageContainer}>
-          <Text style={[styles.messageText, { color: 'red' }]}>MISSED!</Text>
+          <Text style={[styles.messageText, { color: 'red' }]}>SAVED!</Text>
         </View>
       )}
       
@@ -160,62 +226,117 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  field: {
+    position: 'absolute',
+    width: '100%',
+    height: '70%',
+    bottom: 0,
+    backgroundColor: '#4CAF50',
+  },
   goalPost: {
-    width: 300,
-    height: 200,
-    borderWidth: 5,
+    borderWidth: 8,
     borderColor: 'white',
     position: 'absolute',
     top: 100,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 5,
   },
   crossbar: {
-    width: 300,
-    height: 5,
+    width: '100%',
+    height: 8,
     backgroundColor: 'white',
     position: 'absolute',
-    top: 0,
+    top: -8,
+    borderRadius: 4,
   },
   leftPost: {
-    width: 5,
-    height: 200,
+    width: 8,
+    height: '100%',
     backgroundColor: 'white',
     position: 'absolute',
-    left: 0,
+    left: -8,
+    borderRadius: 4,
   },
   rightPost: {
-    width: 5,
-    height: 200,
+    width: 8,
+    height: '100%',
     backgroundColor: 'white',
     position: 'absolute',
-    right: 0,
+    right: -8,
+    borderRadius: 4,
   },
-  net: {
-    width: 290,
-    height: 195,
+  netVertical: {
+    width: '100%',
+    height: '100%',
     position: 'absolute',
-    top: 5,
-    left: 5,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.5)',
+    borderStyle: 'dashed',
+  },
+  netHorizontal: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+    borderStyle: 'dashed',
   },
   goalkeeper: {
-    width: 60,
     height: 90,
-    backgroundColor: 'red',
     position: 'absolute',
     top: 150,
+    alignItems: 'center',
+  },
+  keeperHead: {
+    width: 20,
+    height: 20,
     borderRadius: 10,
+    backgroundColor: '#FFD700',
+    position: 'absolute',
+    top: -10,
+  },
+  keeperBody: {
+    width: '100%',
+    height: 70,
+    backgroundColor: 'red',
+    borderRadius: 5,
+  },
+  keeperLeftArm: {
+    width: 40,
+    height: 10,
+    backgroundColor: 'red',
+    position: 'absolute',
+    top: 15,
+    left: -35,
+    borderRadius: 5,
+    transform: [{ rotate: '30deg' }],
+  },
+  keeperRightArm: {
+    width: 40,
+    height: 10,
+    backgroundColor: 'red',
+    position: 'absolute',
+    top: 15,
+    right: -35,
+    borderRadius: 5,
+    transform: [{ rotate: '-30deg' }],
   },
   ball: {
-    width: 30,
-    height: 30,
     borderRadius: 15,
     backgroundColor: 'white',
     position: 'absolute',
     bottom: 100,
     borderWidth: 1,
     borderColor: 'black',
+    overflow: 'hidden',
+  },
+  ballPattern: {
+    position: 'absolute',
+    width: '100%',
+    height: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    top: '50%',
+    marginTop: -5,
   },
   shootButton: {
     position: 'absolute',
@@ -229,6 +350,7 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.5,
+    backgroundColor: '#999',
   },
   shootButtonText: {
     color: 'white',
